@@ -21,12 +21,18 @@ function PreallocationTools.get_tmp(dc::DiffCache, ::Type{T}) where {
             AbstractTracer, Dual,
         },
     }
-    # We allocate memory here since we assume that sparsity connection happens only
-    # once (or maybe a few times). This simplifies the implementation and allows us
-    # to save memory in the long run since we do not need to store an additional
-    # cache for the sparsity detection that would be used only once but carried
-    # around forever.
-    return similar(dc.du, T)
+    # Reuse the `any_du` backing store (like the generic non-dual fallback) instead
+    # of allocating a fresh array per call. `get_tmp`'s contract is that repeated
+    # fetches from the same `DiffCache` see the same storage: callers commonly write
+    # through one fetch and read through another (e.g. the collocation loops in
+    # BoundaryValueDiffEq). A fresh `similar` per call breaks that — the reads see
+    # unwritten memory, which for inline-allocated tracer types crashes the sparsity
+    # detection. Detection happens only once or twice, so the type-unstable
+    # `Vector{Any}` storage is not a performance concern.
+    if length(dc.du) > length(dc.any_du)
+        resize!(dc.any_du, length(dc.du))
+    end
+    return PreallocationTools._restructure(dc.du, dc.any_du)
 end
 
 end
